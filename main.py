@@ -11,6 +11,138 @@ import os
 np.random.seed(100)
 
 
+# Data loading and preparation
+def load_data(data_dir):
+    """
+    Expected keys in the .npz file:
+        train_features         (1600, 13)
+        test_features          (400, 13)
+        train_labels_reg       (1600,)
+        test_labels_reg        (400,)
+        train_labels_classif   (1600,)
+        test_labels_classif    (400,)
+    """
+    path = os.path.join(data_dir, "features.npz")
+    data = np.load(path)
+    return (
+        data["train_features"],
+        data["test_features"],
+        data["train_labels_reg"],
+        data["test_labels_reg"],
+        data["train_labels_classif"],
+        data["test_labels_classif"],
+    )
+
+def make_validation_split(xtrain, ytrain_reg, ytrain_cls, val_ratio=0.2, seed=0):
+    """
+    Carve a validation set out of the training data.
+    We shuffle once with a fixed seed so results are reproducible: for the
+    same seed you always get the same split, and hyperparameter sweeps
+    are directly comparable.
+    """
+    N = xtrain.shape[0]
+    rng = np.random.default_rng(seed)
+    idx = rng.permutation(N)
+    n_val = int(val_ratio * N)
+    val_idx, tr_idx = idx[:n_val], idx[n_val:]
+    return (
+        xtrain[tr_idx], xtrain[val_idx],
+        ytrain_reg[tr_idx], ytrain_reg[val_idx],
+        ytrain_cls[tr_idx], ytrain_cls[val_idx],
+    )
+
+def preprocess(xtrain, xtest, add_bias):
+    """
+    Standardize features using training-set statistics, optionally prepend a
+    bias column.
+    The bias column is only added for the linear models (linear / logistic
+    regression). KNN does not use it: the bias plays no role in Euclidean
+    distance since it is a constant feature.
+    """
+    means = xtrain.mean(axis=0, keepdims=True)
+    stds = xtrain.std(axis=0, keepdims=True)
+    xtrain = normalize_fn(xtrain, means, stds)
+    xtest = normalize_fn(xtest, means, stds)
+    if add_bias:
+        xtrain = append_bias_term(xtrain)
+        xtest = append_bias_term(xtest)
+    return xtrain, xtest
+
+
+# Evaluation helpers
+def evaluate(preds, gt, task):
+    """Return a dict of metric_name -> value for the given task."""
+    if task == "classification":
+        return {
+            "accuracy": accuracy_fn(preds, gt),
+            "macro_f1": macrof1_fn(preds, gt),
+        }
+    return {"mse": mse_fn(preds, gt)}
+
+
+def print_metrics(name, metrics):
+    parts = [f"{k}={v:.4f}" for k, v in metrics.items()]
+    print(f"  {name:28s}  " + "  ".join(parts))
+
+
+# Method construction
+def build_method(args):
+    if args.method == "dummy_classifier":
+        return DummyClassifier()
+    if args.method == "linear_regression":
+        return LinearRegression(lmda=args.lmda, task_kind="regression")
+    if args.method == "logistic_regression":
+        return LogisticRegression(
+            lr=args.lr, max_iters=args.max_iters, task_kind="classification")
+    if args.method == "knn":
+        return KNN(k=args.K, task_kind=args.task)
+    raise ValueError(f"Unknown method: {args.method}")
+
+
+def method_needs_bias(method):
+    """Only the linear models need a bias term, since KNN does not use weights."""
+    return method in ("linear_regression", "logistic_regression")
+
+def method_task(args):
+    if args.method == "linear_regression":
+        return "regression"
+    if args.method in ("logistic_regression", "dummy_classifier"):
+        return "classification"
+    return args.task
+
+def sweep_knn(xtr, ytr, xva, yva, task, ks):
+    """Return a list of (k, metrics) on the validation set."""
+    results = []
+    for k in ks:
+        model = KNN(k=k, task_kind=task)
+        model.fit(xtr, ytr)
+        preds = model.predict(xva)
+        results.append((k, evaluate(preds, yva, task)))
+    return results
+
+
+def sweep_logistic(xtr, ytr, xva, yva, lrs, iters_list):
+    results = []
+    for lr in lrs:
+        for n in iters_list:
+            model = LogisticRegression(lr=lr, max_iters=n)
+            model.fit(xtr, ytr)
+            preds = model.predict(xva)
+            results.append(((lr, n), evaluate(preds, yva, "classification")))
+    return results
+
+
+def sweep_ridge(xtr, ytr, xva, yva, lmdas):
+    results = []
+    for lmda in lmdas:
+        model = LinearRegression(lmda=lmda)
+        model.fit(xtr, ytr)
+        preds = model.predict(xva)
+        results.append((lmda, evaluate(preds, yva, "regression")))
+    return results
+
+
+
 def main(args):
     """
     The main function of the script.
