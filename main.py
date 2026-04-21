@@ -170,11 +170,12 @@ def main(args):
 
     # Make a validation set (it can overwrite xtest, ytest)
     if not args.test:
-        ### WRITE YOUR CODE HERE
-        pass
+        train_features, test_features, train_labels_reg, test_labels_reg, train_labels_classif, test_labels_classif = make_validation_split(
+            train_features, train_labels_reg, train_labels_classif, val_ratio=0.2, seed=100
+        )
 
     ### WRITE YOUR CODE HERE to do any other data processing
-
+    train_features, test_features = preprocess(train_features, test_features, add_bias=False)
     ## 3. Initialize the method you want to use.
 
     # Follow the "DummyClassifier" example for your methods
@@ -190,7 +191,7 @@ def main(args):
         pass
 
     elif args.method == "linear_regression":
-        ### WRITE YOUR CODE HERE
+        method_obj = LinearRegression()
         pass
 
     else:

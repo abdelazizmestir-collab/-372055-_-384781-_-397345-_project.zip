@@ -1,5 +1,5 @@
 import numpy as np
-import utils
+from src import utils
 
 class LinearRegression(object):
     """
