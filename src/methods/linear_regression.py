@@ -1,16 +1,17 @@
 import numpy as np
-
+import utils
 
 class LinearRegression(object):
     """
     Linear regression.
     """
 
-    def __init__(self):
+    def __init__(self, weights = None):
         """
         Initialize the new object (see dummy_methods.py)
         and set its arguments.
         """
+        self.weights = None
 
     def fit(self, training_data, training_labels):
         """
@@ -25,11 +26,9 @@ class LinearRegression(object):
         Returns:
             pred_labels (np.array): target of shape (N,)
         """
-        ##
-        ###
-        #### WRITE YOUR CODE HERE!
-        ###
-        ##
+        X_train = utils.append_bias_term(training_data)
+        self.weights = self.get_w_analytical(X_train, training_labels)
+        pred_labels = X_train @ self.weights 
         return pred_labels
 
     def predict(self, test_data):
@@ -41,9 +40,25 @@ class LinearRegression(object):
         Returns:
             pred_labels (np.array): labels of shape (N,)
         """
-        ##
-        ###
-        #### WRITE YOUR CODE HERE!
-        ###
-        ##
+        X_test = utils.append_bias_term(test_data)
+        pred_labels = X_test @ self.weights 
         return pred_labels
+    
+    ###########################################################
+    
+    #Helper functions
+    def get_w_analytical(self, X_train, y_train):
+        """
+        Calculates the weights using the analytical closed form solution
+
+        Arguments:
+            X_train (np.array): test data of shape (N, D)
+            y_train (np.array): labels of training set of shape (N,)
+        Returns:
+            w (np.array): weight vector that is solution of our minimization problem
+        """
+
+        w = np.linalg.pinv(X_train) @ y_train
+        return w
+
+    
