@@ -46,8 +46,6 @@ class LogisticRegression(object):
         return onehot_to_label(probs)
 
 
-# ── Auxiliary functions ────────────────────────────────────────────────────────
-
 def softmax(scores):
     """
     Numerically stable softmax.
@@ -90,4 +88,4 @@ def gradient_cross_entropy(data, one_hot_labels, W):
         grad (array): Gradient of shape (D, C)
     """
     probs = softmax(data @ W)          # (N, C)
-    return data.T @ (probs - one_hot_labels)  # (D, C)
+    return data.T @ (probs - one_hot_labels) / data.shape[0] # (D, C)

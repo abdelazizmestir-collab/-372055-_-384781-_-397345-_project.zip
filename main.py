@@ -1,146 +1,14 @@
 import argparse
 import numpy as np
+import os
 
 from src.methods.dummy_methods import DummyClassifier
 from src.methods.logistic_regression import LogisticRegression
 from src.methods.linear_regression import LinearRegression
 from src.methods.knn import KNN
 from src.utils import normalize_fn, append_bias_term, accuracy_fn, macrof1_fn, mse_fn
-import os
 
 np.random.seed(100)
-
-
-# Data loading and preparation
-def load_data(data_dir):
-    """
-    Expected keys in the .npz file:
-        train_features         (1600, 13)
-        test_features          (400, 13)
-        train_labels_reg       (1600,)
-        test_labels_reg        (400,)
-        train_labels_classif   (1600,)
-        test_labels_classif    (400,)
-    """
-    path = os.path.join(data_dir, "features.npz")
-    data = np.load(path)
-    return (
-        data["train_features"],
-        data["test_features"],
-        data["train_labels_reg"],
-        data["test_labels_reg"],
-        data["train_labels_classif"],
-        data["test_labels_classif"],
-    )
-
-def make_validation_split(xtrain, ytrain_reg, ytrain_cls, val_ratio=0.2, seed=0):
-    """
-    Carve a validation set out of the training data.
-    We shuffle once with a fixed seed so results are reproducible: for the
-    same seed you always get the same split, and hyperparameter sweeps
-    are directly comparable.
-    """
-    N = xtrain.shape[0]
-    rng = np.random.default_rng(seed)
-    idx = rng.permutation(N)
-    n_val = int(val_ratio * N)
-    val_idx, tr_idx = idx[:n_val], idx[n_val:]
-    return (
-        xtrain[tr_idx], xtrain[val_idx],
-        ytrain_reg[tr_idx], ytrain_reg[val_idx],
-        ytrain_cls[tr_idx], ytrain_cls[val_idx],
-    )
-
-def preprocess(xtrain, xtest, add_bias):
-    """
-    Standardize features using training-set statistics, optionally prepend a
-    bias column.
-    The bias column is only added for the linear models (linear / logistic
-    regression). KNN does not use it: the bias plays no role in Euclidean
-    distance since it is a constant feature.
-    """
-    means = xtrain.mean(axis=0, keepdims=True)
-    stds = xtrain.std(axis=0, keepdims=True)
-    xtrain = normalize_fn(xtrain, means, stds)
-    xtest = normalize_fn(xtest, means, stds)
-    if add_bias:
-        xtrain = append_bias_term(xtrain)
-        xtest = append_bias_term(xtest)
-    return xtrain, xtest
-
-
-# Evaluation helpers
-def evaluate(preds, gt, task):
-    """Return a dict of metric_name -> value for the given task."""
-    if task == "classification":
-        return {
-            "accuracy": accuracy_fn(preds, gt),
-            "macro_f1": macrof1_fn(preds, gt),
-        }
-    return {"mse": mse_fn(preds, gt)}
-
-
-def print_metrics(name, metrics):
-    parts = [f"{k}={v:.4f}" for k, v in metrics.items()]
-    print(f"  {name:28s}  " + "  ".join(parts))
-
-
-# Method construction
-def build_method(args):
-    if args.method == "dummy_classifier":
-        return DummyClassifier()
-    if args.method == "linear_regression":
-        return LinearRegression(lmda=args.lmda, task_kind="regression")
-    if args.method == "logistic_regression":
-        return LogisticRegression(
-            lr=args.lr, max_iters=args.max_iters, task_kind="classification")
-    if args.method == "knn":
-        return KNN(k=args.K, task_kind=args.task)
-    raise ValueError(f"Unknown method: {args.method}")
-
-
-def method_needs_bias(method):
-    """Only the linear models need a bias term, since KNN does not use weights."""
-    return method in ("linear_regression", "logistic_regression")
-
-def method_task(args):
-    if args.method == "linear_regression":
-        return "regression"
-    if args.method in ("logistic_regression", "dummy_classifier"):
-        return "classification"
-    return args.task
-
-def sweep_knn(xtr, ytr, xva, yva, task, ks):
-    """Return a list of (k, metrics) on the validation set."""
-    results = []
-    for k in ks:
-        model = KNN(k=k, task_kind=task)
-        model.fit(xtr, ytr)
-        preds = model.predict(xva)
-        results.append((k, evaluate(preds, yva, task)))
-    return results
-
-
-def sweep_logistic(xtr, ytr, xva, yva, lrs, iters_list):
-    results = []
-    for lr in lrs:
-        for n in iters_list:
-            model = LogisticRegression(lr=lr, max_iters=n)
-            model.fit(xtr, ytr)
-            preds = model.predict(xva)
-            results.append(((lr, n), evaluate(preds, yva, "classification")))
-    return results
-
-
-def sweep_ridge(xtr, ytr, xva, yva, lmdas):
-    results = []
-    for lmda in lmdas:
-        model = LinearRegression(lmda=lmda)
-        model.fit(xtr, ytr)
-        preds = model.predict(xva)
-        results.append((lmda, evaluate(preds, yva, "regression")))
-    return results
-
 
 
 def main(args):
@@ -170,12 +38,39 @@ def main(args):
 
     # Make a validation set (it can overwrite xtest, ytest)
     if not args.test:
-        train_features, test_features, train_labels_reg, test_labels_reg, train_labels_classif, test_labels_classif = make_validation_split(
-            train_features, train_labels_reg, train_labels_classif, val_ratio=0.2, seed=100
-        )
+        # Carve a validation set out of the training data (80/20 split).
+        N = train_features.shape[0]
+        rng = np.random.default_rng(seed=100)
+        idx = rng.permutation(N)
+        n_val = int(0.2 * N)
+        val_idx, tr_idx = idx[:n_val], idx[n_val:]
 
-    ### WRITE YOUR CODE HERE to do any other data processing
-    train_features, test_features = preprocess(train_features, test_features, add_bias=False)
+        test_features = train_features[val_idx]
+        test_labels_reg = train_labels_reg[val_idx]
+        test_labels_classif = train_labels_classif[val_idx]
+
+        train_features = train_features[tr_idx]
+        train_labels_reg = train_labels_reg[tr_idx]
+        train_labels_classif = train_labels_classif[tr_idx]
+
+    # Standardize features using training-set statistics.
+    means = train_features.mean(axis=0, keepdims=True)
+    stds = train_features.std(axis=0, keepdims=True)
+    train_features = normalize_fn(train_features, means, stds)
+    test_features = normalize_fn(test_features, means, stds)
+
+    # Keep bias-free copies for KNN / dummy, and build bias-augmented copies
+    # for linear models.
+    train_features_bias = append_bias_term(train_features)
+    test_features_bias = append_bias_term(test_features)
+
+    if args.method in ("linear_regression", "logistic_regression"):
+        train_features_for_fit = train_features_bias
+        test_features_for_fit = test_features_bias
+    else:
+        train_features_for_fit = train_features
+        test_features_for_fit = test_features
+
     ## 3. Initialize the method you want to use.
 
     # Follow the "DummyClassifier" example for your methods
@@ -183,16 +78,13 @@ def main(args):
         method_obj = DummyClassifier(arg1=1, arg2=2)
 
     elif args.method == "knn":
-        ### WRITE YOUR CODE HERE
-        pass
+        method_obj = KNN(k=args.K, task_kind=args.task)
 
     elif args.method == "logistic_regression":
-        ### WRITE YOUR CODE HERE
-        pass
+        method_obj = LogisticRegression(lr=args.lr, max_iters=args.max_iters)
 
     elif args.method == "linear_regression":
         method_obj = LinearRegression()
-        pass
 
     else:
         raise ValueError(f"Unknown method: {args.method}")
@@ -202,10 +94,10 @@ def main(args):
     if args.task == "classification":
         assert args.method != "linear_regression", f"You should use linear regression as a regression method"
         # Fit the method on training data
-        preds_train = method_obj.fit(train_features, train_labels_classif)
+        preds_train = method_obj.fit(train_features_for_fit, train_labels_classif)
 
         # Predict on unseen data
-        preds = method_obj.predict(test_features)
+        preds = method_obj.predict(test_features_for_fit)
 
         # Report results: performance on train and valid/test sets
         acc = accuracy_fn(preds_train, train_labels_classif)
@@ -219,10 +111,10 @@ def main(args):
     elif args.task == "regression":
         assert args.method != "logistic_regression", f"You should use logistic regression as a classification method"
         # Fit the method on training data
-        preds_train = method_obj.fit(train_features, train_labels_reg)
+        preds_train = method_obj.fit(train_features_for_fit, train_labels_reg)
 
         # Predict on unseen data
-        preds = method_obj.predict(test_features)
+        preds = method_obj.predict(test_features_for_fit)
 
         # Report results: MSE on train and valid/test sets
         train_mse = mse_fn(preds_train, train_labels_reg)
